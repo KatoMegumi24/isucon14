@@ -65,12 +65,25 @@ func setup() http.Handler {
 	dbConfig.Net = "tcp"
 	dbConfig.DBName = dbname
 	dbConfig.ParseTime = true
+	dbConfig.InterpolateParams = true
 
 	_db, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	if err != nil {
 		panic(err)
 	}
 	db = _db
+
+	// プール内に保持できるアイドル接続数の制限を設定 (default: 2)
+	db.SetMaxIdleConns(1024)
+	// 接続してから再利用できる最大期間
+	db.SetConnMaxLifetime(0)
+	// アイドル接続してから再利用できる最大期間
+	db.SetConnMaxIdleTime(0)
+
+	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
+	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2
+	http.DefaultTransport.(*http.Transport).ForceAttemptHTTP2 = true
+	http.DefaultClient.Timeout = 5 * time.Second // 問題の切り分け用
 
 	{
 		mux := chi.NewRouter()

@@ -414,14 +414,47 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	continuingRideCount := 0
-	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
+	// ここで rides から rideIDs を抽出して一括で最新ステータスを取得する
+	rideIDs := make([]string, len(rides))
+	for i, ride := range rides {
+		rideIDs[i] = ride.ID
+	}
+
+	statusMap := make(map[string]string)
+	if len(rideIDs) > 0 {
+		query, args, err := sqlx.In(`
+			SELECT rs.ride_id, rs.status FROM ride_statuses rs
+			INNER JOIN (
+				SELECT ride_id, MAX(created_at) as max_created
+				FROM ride_statuses
+				WHERE ride_id IN (?)
+				GROUP BY ride_id
+			) t ON rs.ride_id = t.ride_id AND rs.created_at = t.max_created
+		`, rideIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		if status != "COMPLETED" {
+		query = tx.Rebind(query)
+		type latestStatusRow struct {
+			RideID string `db:"ride_id"`
+			Status string `db:"status"`
+		}
+		latestStatuses := []latestStatusRow{}
+		if err := tx.SelectContext(ctx, &latestStatuses, query, args...); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, s := range latestStatuses {
+			statusMap[s.RideID] = s.Status
+		}
+	}
+
+	// 継続中ライド数を計算
+	continuingRideCount := 0
+	for _, ride := range rides {
+		status := statusMap[ride.ID]
+		if status != "COMPLETED" && status != "" {
 			continuingRideCount++
 		}
 	}
@@ -981,27 +1014,61 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 一度に全ridesを取得するのは非効率なので、椅子ごとに処理する際にまとめてライドIDを回収してからステータスを取得する
 	nearbyChairs := []appGetNearbyChairsResponseChair{}
+
 	for _, chair := range chairs {
 		if !chair.IsActive {
 			continue
 		}
 
-		rides := []*Ride{}
-		if err := tx.SelectContext(ctx, &rides, `SELECT * FROM rides WHERE chair_id = ? ORDER BY created_at DESC`, chair.ID); err != nil {
+		chairRides := []*Ride{}
+		if err := tx.SelectContext(ctx, &chairRides, `SELECT * FROM rides WHERE chair_id = ? ORDER BY created_at DESC`, chair.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 
-		skip := false
-		for _, ride := range rides {
-			// 過去にライドが存在し、かつ、それが完了していない場合はスキップ
-			status, err := getLatestRideStatus(ctx, tx, ride.ID)
+		// ライドごとの最新ステータスを一度に取得する
+		rideIDs := make([]string, len(chairRides))
+		for i, ride := range chairRides {
+			rideIDs[i] = ride.ID
+		}
+
+		statusMap := make(map[string]string)
+		if len(rideIDs) > 0 {
+			query, args, err := sqlx.In(`
+				SELECT rs.ride_id, rs.status FROM ride_statuses rs
+				INNER JOIN (
+					SELECT ride_id, MAX(created_at) as max_created
+					FROM ride_statuses
+					WHERE ride_id IN (?)
+					GROUP BY ride_id
+				) t ON rs.ride_id = t.ride_id AND rs.created_at = t.max_created
+			`, rideIDs)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			if status != "COMPLETED" {
+			query = tx.Rebind(query)
+			type latestStatusRow struct {
+				RideID string `db:"ride_id"`
+				Status string `db:"status"`
+			}
+			latestStatuses := []latestStatusRow{}
+			if err := tx.SelectContext(ctx, &latestStatuses, query, args...); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			for _, s := range latestStatuses {
+				statusMap[s.RideID] = s.Status
+			}
+		}
+
+		skip := false
+		for _, ride := range chairRides {
+			status := statusMap[ride.ID]
+			if status != "" && status != "COMPLETED" {
+				// 過去にライドが存在し、かつ完了していない場合はスキップ
 				skip = true
 				break
 			}
@@ -1010,7 +1077,7 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// 最新の位置情報を取得
+		// 最新位置情報を取得
 		chairLocation := &ChairLocation{}
 		err = tx.GetContext(
 			ctx,
@@ -1046,6 +1113,11 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 		`SELECT CURRENT_TIMESTAMP(6)`,
 	)
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
