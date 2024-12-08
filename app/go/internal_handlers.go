@@ -116,7 +116,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 				ride := rides[i]
 				distToPickup := calculateDistance(chair.LastLat, chair.LastLon, ride.PickupLatitude, ride.PickupLongitude)
 				distToDestination := calculateDistance(ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
-				totalDist := distToPickup + distToDestination * 2
+				totalDist := distToPickup + distToDestination * 3
 				costMatrix[i][j] = totalDist / chair.Speed
 			} else {
 				costMatrix[i][j] = largeCost
