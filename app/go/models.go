@@ -17,8 +17,8 @@ type Chair struct {
 
 	TotalDistance          int        `db:"total_distance"`
 	TotalDistanceUpdatedAt *time.Time `db:"total_distance_updated_at"`
-	LastLongitude           int        `db:"last_longitude"`
-	LastLatitude            int        `db:"last_latitude"`
+	LastLongitude          *int       `db:"last_longitude"`
+	LastLatitude           *int       `db:"last_latitude"`
 }
 
 type ChairModel struct {
