@@ -415,14 +415,47 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	continuingRideCount := 0
-	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
+	// ここで rides から rideIDs を抽出して一括で最新ステータスを取得する
+	rideIDs := make([]string, len(rides))
+	for i, ride := range rides {
+		rideIDs[i] = ride.ID
+	}
+
+	statusMap := make(map[string]string)
+	if len(rideIDs) > 0 {
+		query, args, err := sqlx.In(`
+			SELECT rs.ride_id, rs.status FROM ride_statuses rs
+			INNER JOIN (
+				SELECT ride_id, MAX(created_at) as max_created
+				FROM ride_statuses
+				WHERE ride_id IN (?)
+				GROUP BY ride_id
+			) t ON rs.ride_id = t.ride_id AND rs.created_at = t.max_created
+		`, rideIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		if status != "COMPLETED" {
+		query = tx.Rebind(query)
+		type latestStatusRow struct {
+			RideID string `db:"ride_id"`
+			Status string `db:"status"`
+		}
+		latestStatuses := []latestStatusRow{}
+		if err := tx.SelectContext(ctx, &latestStatuses, query, args...); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, s := range latestStatuses {
+			statusMap[s.RideID] = s.Status
+		}
+	}
+
+	// 継続中ライド数を計算
+	continuingRideCount := 0
+	for _, ride := range rides {
+		status := statusMap[ride.ID]
+		if status != "COMPLETED" && status != "" {
 			continuingRideCount++
 		}
 	}
