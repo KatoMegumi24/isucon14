@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/kaz/pprotein/integration/standalone"
 )
 
 var db *sqlx.DB
@@ -69,6 +71,9 @@ func setup() http.Handler {
 	mux.Use(middleware.Logger)
 	mux.Use(middleware.Recoverer)
 	mux.HandleFunc("POST /api/initialize", postInitialize)
+
+	// ERROR!! pproteinMux.EnableDebugHandler(mux)
+	standalone.Integrate(":3000")
 
 	// app handlers
 	{
@@ -137,6 +142,12 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	go func() {
+		if _, err := http.Get("http://57.180.38.84:9000/api/group/collect"); err != nil {
+			log.Printf("failed to communicate with pprotein: %v", err)
+		}
+	}()
 
 	writeJSON(w, http.StatusOK, postInitializeResponse{Language: "go"})
 }
