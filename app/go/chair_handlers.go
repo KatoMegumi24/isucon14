@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -111,20 +112,25 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	var createdAt time.Time
 	chairLocationID := ulid.Make().String()
-	if _, err := tx.ExecContext(
+	if err := tx.QueryRowContext(
 		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) 
+		 VALUES (?, ?, ?, ?)
+		 RETURNING created_at`,
 		chairLocationID, chair.ID, req.Latitude, req.Longitude,
-	); err != nil {
+	).Scan(&createdAt); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	location := &ChairLocation{}
-	if err := tx.GetContext(ctx, location, `SELECT * FROM chair_locations WHERE id = ?`, chairLocationID); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	location := &ChairLocation{
+		ID:        chairLocationID,
+		ChairID:   chair.ID,
+		Latitude:  req.Latitude,
+		Longitude: req.Longitude,
+		CreatedAt: createdAt,
 	}
 
 	// 前回の位置情報を取得
@@ -136,27 +142,23 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		 WHERE chair_id = ? AND created_at < ? 
 		 ORDER BY created_at DESC LIMIT 1`,
 		chair.ID, location.CreatedAt)
-	
-	// 距離の増分を計算
-	var distanceIncrement int
-	if err == nil {
-		// 前回の位置情報が存在する場合
-		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, prevLocation.Latitude, prevLocation.Longitude)
-		
-		// total_distanceを更新
-		_, err = tx.ExecContext(
-			ctx,
-			`UPDATE chairs 
-			 SET total_distance = IFNULL(total_distance, 0) + ?,
-			     total_distance_updated_at = ?
-			 WHERE id = ?`,
-			distanceIncrement, location.CreatedAt, chair.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		// sql.ErrNoRows以外のエラーの場合
+
+	distanceIncrement := 0
+	if chair.LastLatitude != 0 || chair.LastLongitude != 0 {
+		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, chair.LastLatitude, chair.LastLongitude)
+	}
+
+	// chairの total_distance, last_latitude, last_longitudeを更新
+	_, err = tx.ExecContext(
+		ctx,
+		`UPDATE chairs 
+		 SET total_distance = IFNULL(total_distance, 0) + ?,
+		     total_distance_updated_at = ?,
+		     last_latitude = ?,
+		     last_longitude = ?
+		 WHERE id = ?`,
+		distanceIncrement, location.CreatedAt, location.Latitude, location.Longitude, chair.ID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
