@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+
+	"github.com/oklog/ulid/v2"
 )
 
+// internalGetMatching: 500msに一度呼ばれる想定。待っている全てのライドに対して椅子を割り当てる。
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -16,13 +19,22 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// 1. 未割り当てのライドを取得 (古い順に1件)
-	// FOR UPDATE を付与してこのライドに対する同時マッチング処理を防止
-	ride := &Ride{}
-	err = tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE`)
+	// MATCHING状態でまだchair_idがNULLのライドを全て取得
+	// ライドの最新ステータスがMATCHINGでchair_idがNULLのものを取得する
+	// (最新ステータス取得にはサブクエリを使用)
+	rides := []Ride{}
+	err = tx.SelectContext(ctx, &rides, `
+		SELECT r.* FROM rides r
+		INNER JOIN (
+			SELECT ride_id, MAX(created_at) AS max_created FROM ride_statuses GROUP BY ride_id
+		) rs_max ON rs_max.ride_id = r.id
+		INNER JOIN ride_statuses rs ON rs.ride_id = r.id AND rs.created_at = rs_max.max_created
+		WHERE rs.status = 'MATCHING' AND r.chair_id IS NULL
+		ORDER BY r.created_at
+	`)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// 未割り当てライドなし
+			// 待ちライドなし
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -30,90 +42,153 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. 利用可能な椅子候補を取得
-	// 椅子候補条件:
-	// - is_active = TRUE
-	// - 現在未完了のライドにアサインされていないこと
-	//
-	// 「未完了ライドにアサインされていない」判定方法:
-	// ride_statusesから、chair_idに紐づくライドの最新状態がCOMPLETED以外のものがなければOK。
-	//
-	// ここでは chairsテーブルとchair_models、chair_locations(最新位置)を結合して取得します。
-	//
-	// 最新位置は chair_locations から chair_id 毎に最も新しいレコードをJOINするためにサブクエリを使います。
-	// 未完了ライドの存在判定はNOT EXISTSでチェックします。
-	query := `
-SELECT c.id, c.owner_id, c.name, c.model, c.is_active, c.access_token, c.created_at, c.updated_at,
-       c.total_distance, c.total_distance_updated_at, c.last_longitude, c.last_latitude,
-       cm.speed,
-       cl.latitude AS current_latitude, cl.longitude AS current_longitude
-FROM chairs c
-JOIN chair_models cm ON c.model = cm.name
-JOIN (
-    SELECT cc.chair_id, cc.latitude, cc.longitude FROM chair_locations cc
-    INNER JOIN (
-        SELECT chair_id, MAX(created_at) AS max_created
-        FROM chair_locations
-        GROUP BY chair_id
-    ) latest ON cc.chair_id = latest.chair_id AND cc.created_at = latest.max_created
-) cl ON cl.chair_id = c.id
-WHERE c.is_active = TRUE
-  AND NOT EXISTS (
-    SELECT 1
-    FROM rides r
-    JOIN (
-      SELECT rs.ride_id, rs.status
-      FROM ride_statuses rs
-      INNER JOIN (
-        SELECT ride_id, MAX(created_at) AS max_created
-        FROM ride_statuses
-        GROUP BY ride_id
-      ) t ON rs.ride_id = t.ride_id AND rs.created_at = t.max_created
-    ) lr ON r.id = lr.ride_id
-    WHERE r.chair_id = c.id
-      AND lr.status != 'COMPLETED'
-  )
-`
-	type CandidateChair struct {
-		Chair
-		Speed            int `db:"speed"`
-		CurrentLatitude  int `db:"current_latitude"`
-		CurrentLongitude int `db:"current_longitude"`
-	}
-
-	candidates := []CandidateChair{}
-	if err := tx.SelectContext(ctx, &candidates, query); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	if len(candidates) == 0 {
-		// 利用可能な椅子がない
+	if len(rides) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// 3. 各候補椅子について到着予測時間を計算し、最も早く到着できる椅子を選択
-	// 到着予測時間 ≒ マンハッタン距離 / スピード（スピードが大きいほど早い）
-	// スピードが0のケースは無いと仮定（モデル定義より）
-	bestChair := candidates[0]
-	bestTime := arrivalTime(bestChair.Speed, bestChair.CurrentLatitude, bestChair.CurrentLongitude,
-		ride.PickupLatitude, ride.PickupLongitude)
+	// すでに他のライド(未COMPLETED)に割り当てられていない、かつis_active = trueな椅子を取得
+	// 最新ステータスがCOMPLETED以外のライドを持つ椅子は除外
+	// 以下のサブクエリで "chairs" の中から自由なもののみ抽出
+	chairsWithModel := []struct {
+		ID       string        `db:"id"`
+		Model    string        `db:"model"`
+		IsActive bool          `db:"is_active"`
+		LastLat  sql.NullInt64 `db:"last_latitude"`
+		LastLon  sql.NullInt64 `db:"last_longitude"`
+		Speed    int           `db:"speed"`
+	}{}
 
-	for _, chair := range candidates[1:] {
-		t := arrivalTime(chair.Speed, chair.CurrentLatitude, chair.CurrentLongitude,
-			ride.PickupLatitude, ride.PickupLongitude)
-		if t < bestTime {
-			bestTime = t
-			bestChair = chair
-		}
-	}
-
-	// 4. ライドに椅子を割り当て
-	_, err = tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", bestChair.ID, ride.ID)
+	err = tx.SelectContext(ctx, &chairsWithModel, `
+		SELECT c.id, c.model, c.is_active, c.last_latitude, c.last_longitude, cm.speed
+		FROM chairs c
+		INNER JOIN chair_models cm ON c.model = cm.name
+		WHERE c.is_active = TRUE
+		AND c.id NOT IN (
+			SELECT DISTINCT r2.chair_id 
+			FROM rides r2
+			INNER JOIN (
+				SELECT ride_id, MAX(created_at) AS max_created FROM ride_statuses GROUP BY ride_id
+			) t ON t.ride_id = r2.id
+			INNER JOIN ride_statuses rs2 ON rs2.ride_id = r2.id AND rs2.created_at = t.max_created
+			WHERE rs2.status != 'COMPLETED' AND r2.chair_id IS NOT NULL
+		)
+	`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+
+	// chair_id→chair情報マップ
+	freeChairs := make(map[string]*struct {
+		ID      string
+		Speed   int
+		LastLat int
+		LastLon int
+	})
+	for _, c := range chairsWithModel {
+		if !c.LastLat.Valid || !c.LastLon.Valid {
+			// 位置情報がない椅子は割り当て困難なのでスキップする（要件次第で扱いを決める）
+			continue
+		}
+		freeChairs[c.ID] = &struct {
+			ID      string
+			Speed   int
+			LastLat int
+			LastLon int
+		}{
+			ID:      c.ID,
+			Speed:   c.Speed,
+			LastLat: int(c.LastLat.Int64),
+			LastLon: int(c.LastLon.Int64),
+		}
+	}
+
+	if len(freeChairs) == 0 {
+		// 空いている椅子がなければ何もできない
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// ライドごとに最適な椅子を探す
+	// 到着予測時間 = (マンハッタン距離) / speed
+	// speedが大きいほど早く到着する
+	// 最小到着時間の椅子を選択
+	assignments := []struct {
+		RideID  string
+		ChairID string
+	}{}
+
+	for _, ride := range rides {
+		bestChairID := ""
+		bestTime := 1 << 30 // 大きな値で初期化
+		for cid, ch := range freeChairs {
+			dist := calculateDistance(ch.LastLat, ch.LastLon, ride.PickupLatitude, ride.PickupLongitude)
+			if ch.Speed <= 0 {
+				// speedが0など異常値の場合スキップ
+				continue
+			}
+			timeEstimate := dist / ch.Speed
+			// 同着時は最初のものを採用するが、必要なら速度優先などのルールを追加可
+			if timeEstimate < bestTime {
+				bestTime = timeEstimate
+				bestChairID = cid
+			}
+		}
+
+		if bestChairID == "" {
+			// 適した椅子が無い場合は割り当てなし
+			continue
+		}
+
+		// 割り当て決定
+		assignments = append(assignments, struct {
+			RideID  string
+			ChairID string
+		}{RideID: ride.ID, ChairID: bestChairID})
+
+		// 割り当てた椅子はもう使えないのでfreeChairsから削除
+		delete(freeChairs, bestChairID)
+		if len(freeChairs) == 0 {
+			// もう椅子が無いのでこれ以上割り当て不可能
+			break
+		}
+	}
+
+	if len(assignments) == 0 {
+		// 割り当てできなかった
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// 割り当て結果をDBに反映
+	// 一括でUPDATEとstatus挿入
+	// ステータスをENROUTEに変更
+	// Rides.chair_idを更新
+	var rideIDs []string
+	params := []interface{}{}
+	for _, asg := range assignments {
+		rideIDs = append(rideIDs, asg.RideID)
+		// Rides の更新
+		params = append(params, asg.ChairID, asg.RideID)
+	}
+	// 一括UPDATE: バルクUPDATEは複雑なので個別UPDATEする
+	// パフォーマンスチューニングするならバルクINSERT、UPDATEを検討
+	for _, asg := range assignments {
+		// rideにchair_idを割り当て
+		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", asg.ChairID, asg.RideID); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		// ステータスをENROUTEに追加
+		newStatusID := ulidMake() // ulidMake()は既存のulid生成関数と同等と仮定
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
+			newStatusID, asg.RideID, "ENROUTE",
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -124,9 +199,7 @@ WHERE c.is_active = TRUE
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// arrivalTime は単純な到着推定時間を返す
-func arrivalTime(speed, cLat, cLon, rLat, rLon int) float64 {
-	dist := float64(abs(cLat-rLat) + abs(cLon-rLon))
-	// speedあたり1距離進むと考えると、time = distance/speed
-	return dist / float64(speed)
+// 内部でULID生成用の関数（既存app_handlers.goなどと同様のもの）
+func ulidMake() string {
+	return ulid.Make().String()
 }
