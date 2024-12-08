@@ -316,10 +316,10 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		queryOwners = tx.Rebind(queryOwners)
+		queryOwners = tx_sub.Rebind(queryOwners)
 
 		owners := []Owner{}
-		if err := tx.SelectContext(ctx, &owners, queryOwners, argsOwners...); err != nil {
+		if err := tx_sub.SelectContext(ctx, &owners, queryOwners, argsOwners...); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
