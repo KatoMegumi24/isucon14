@@ -83,13 +83,13 @@ func setup() http.Handler {
 
 	// プール内に保持できるアイドル接続数の制限を設定 (default: 2)
 	db.SetMaxIdleConns(1024)
-	db.SetMaxIdleConns(1024)
+	db_sub.SetMaxIdleConns(1024)
 	// 接続してから再利用できる最大期間
 	db.SetConnMaxLifetime(0)
-	db.SetConnMaxLifetime(0)
+	db_sub.SetConnMaxLifetime(0)
 	// アイドル接続してから再利用できる最大期間
 	db.SetConnMaxIdleTime(0)
-	db.SetConnMaxIdleTime(0)
+	db_sub.SetConnMaxIdleTime(0)
 
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2
