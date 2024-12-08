@@ -905,7 +905,7 @@ func getChairStats(ctx context.Context, tx *sqlx.Tx, chairID string) (appGetNoti
 		return stats, err
 	}
 
-	totalRideCount := 0
+	totalRideCount := 1
 	totalEvaluation := 0.0
 	for _, ride := range rides {
 		rideStatuses := []RideStatus{}
