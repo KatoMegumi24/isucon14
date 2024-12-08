@@ -355,12 +355,15 @@ func initializeChairTotalDistance(ctx context.Context) error {
 		}
 
 		var updatedAt time.Time
+		var lastLatitude, lastLongitude int
 		if len(locs) > 0 {
 			updatedAt = locs[len(locs)-1].CreatedAt
+			lastLatitude = locs[len(locs)-1].Latitude
+			lastLongitude = locs[len(locs)-1].Longitude
 		}
 
-		values = append(values, "(?, ?, ?)")
-		args = append(args, chairID, totalDistance, updatedAt)
+		values = append(values, "(?, ?, ?, ?, ?)")
+		args = append(args, chairID, totalDistance, updatedAt, lastLatitude, lastLongitude)
 	}
 
 	// バルクアップデートのクエリを修正
@@ -372,18 +375,28 @@ func initializeChairTotalDistance(ctx context.Context) error {
 				END,
 			total_distance_updated_at = CASE id 
 				%s
+				END,
+			last_latitude = CASE id
+				%s
+				END,
+			last_longitude = CASE id
+				%s
 				END
 			WHERE id IN (%s)`
 
 		// WHENケースを構築
 		var distanceCases []string
 		var timestampCases []string
+		var latitudeCases []string
+		var longitudeCases []string
 		var chairIDs []string
 
-		for i := 0; i < len(args); i += 3 {
+		for i := 0; i < len(args); i += 5 {
 			chairID := args[i].(string)
 			distanceCases = append(distanceCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
 			timestampCases = append(timestampCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
+			latitudeCases = append(latitudeCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
+			longitudeCases = append(longitudeCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
 			chairIDs = append(chairIDs, "'"+chairID+"'")
 		}
 
@@ -392,16 +405,24 @@ func initializeChairTotalDistance(ctx context.Context) error {
 			query,
 			strings.Join(distanceCases, "\n"),
 			strings.Join(timestampCases, "\n"),
+			strings.Join(latitudeCases, "\n"),
+			strings.Join(longitudeCases, "\n"),
 			strings.Join(chairIDs, ","),
 		)
 
 		// パラメータを再構築
 		var execArgs []interface{}
-		for i := 0; i < len(args); i += 3 {
+		for i := 0; i < len(args); i += 5 {
 			execArgs = append(execArgs, args[i+1]) // distance
 		}
-		for i := 0; i < len(args); i += 3 {
+		for i := 0; i < len(args); i += 5 {
 			execArgs = append(execArgs, args[i+2]) // timestamp
+		}
+		for i := 0; i < len(args); i += 5 {
+			execArgs = append(execArgs, args[i+3]) // last_latitude
+		}
+		for i := 0; i < len(args); i += 5 {
+			execArgs = append(execArgs, args[i+4]) // last_longitude
 		}
 
 		if _, err := db.ExecContext(ctx, query, execArgs...); err != nil {
