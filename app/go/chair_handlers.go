@@ -112,6 +112,10 @@ func chairPostActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// キャッシュ更新
+	chair.IsActive = req.IsActive
+	chairCache[chair.AccessToken] = chair
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -175,6 +179,13 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	// キャッシュ更新
+	chair.TotalDistance += distanceIncrement
+	chair.TotalDistanceUpdatedAt = &location.CreatedAt
+	chair.LastLatitude = &location.Latitude
+	chair.LastLongitude = &location.Longitude
+	chairCache[chair.AccessToken] = chair
 
 	ride := &Ride{}
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
