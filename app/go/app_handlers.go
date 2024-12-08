@@ -718,11 +718,6 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.Commit(); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
 	fare, err := calculateDiscountedFare(ctx, tx, ride.UserID, ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
