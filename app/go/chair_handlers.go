@@ -56,6 +56,30 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// selectで今追加したchairを取得(FIXME: ↓のReturningが使えなかった)
+	chair := &Chair{}
+	if err := db.GetContext(ctx, chair, "SELECT * FROM chairs WHERE id = ?", chairID); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// // returiningを使って、追加したchairを取得
+	// chair := &Chair{}
+	// if err := db.QueryRow("INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?) RETURNING id, owner_id, name, model, is_active, access_token", chairID, owner.ID, req.Name, req.Model, false, accessToken).Scan(
+	// 	&chair.ID,
+	// 	&chair.OwnerID,
+	// 	&chair.Name,
+	// 	&chair.Model,
+	// 	&chair.IsActive,
+	// 	&chair.AccessToken,
+	// ); err != nil {
+	// 	writeError(w, http.StatusInternalServerError, err)
+	// 	return
+	// }
+
+	// キャッシュ更新
+	chairCache.Get(ctx, accessToken)
+
 	http.SetCookie(w, &http.Cookie{
 		Path:  "/",
 		Name:  "chair_session",
@@ -87,6 +111,10 @@ func chairPostActivity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	// キャッシュ更新
+	chair.IsActive = req.IsActive
+	chairCache.Get(ctx, chair.AccessToken)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -151,6 +179,13 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	// キャッシュ更新
+	chair.TotalDistance += distanceIncrement
+	chair.TotalDistanceUpdatedAt = &location.CreatedAt
+	chair.LastLatitude = &location.Latitude
+	chair.LastLongitude = &location.Longitude
+	chairCache.Get(ctx, chair.AccessToken)
 
 	ride := &Ride{}
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
