@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -383,7 +384,13 @@ type executableGet interface {
 }
 
 func getLatestRideStatus(ctx context.Context, tx executableGet, rideID string) (string, error) {
-	status := rideStatusCache[rideID].Status
+	status := ""
+	if err := tx.GetContext(ctx, &status, `SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1`, rideID); err != nil {
+		return "", err
+	}
+	if status != rideStatusCache[rideID].Status {
+		log.Printf("status: %v cached: %v", status, rideStatusCache[rideID].Status)
+	}
 	return status, nil
 }
 
@@ -905,7 +912,7 @@ func getChairStats(ctx context.Context, tx *sqlx.Tx, chairID string) (appGetNoti
 		return stats, err
 	}
 
-	totalRideCount := 1
+	totalRideCount := 0
 	totalEvaluation := 0.0
 	for _, ride := range rides {
 		rideStatuses := []RideStatus{}
