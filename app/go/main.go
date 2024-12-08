@@ -71,7 +71,7 @@ func setup() http.Handler {
 	dbConfig.ParseTime = true
 	dbConfig.InterpolateParams = true
 
-	dbConfig.Addr = "192.168.0.12:3306"
+	// dbConfig.Addr = "192.168.0.12:3306"
 	_db1, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	dbConfig.Addr = "192.168.0.13:3306"
 	_db2, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
