@@ -112,15 +112,14 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	var createdAt time.Time
+	createdAt := time.Now()
 	chairLocationID := ulid.Make().String()
-	if err := tx.QueryRowContext(
+	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) 
-		 VALUES (?, ?, ?, ?)
-		 RETURNING created_at`,
-		chairLocationID, chair.ID, req.Latitude, req.Longitude,
-	).Scan(&createdAt); err != nil {
+		`INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) 
+		 VALUES (?, ?, ?, ?, ?)`,
+		chairLocationID, chair.ID, req.Latitude, req.Longitude, createdAt,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -133,15 +132,6 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: createdAt,
 	}
 
-	// 前回の位置情報を取得
-	var prevLocation ChairLocation
-	err = tx.GetContext(
-		ctx,
-		&prevLocation,
-		`SELECT * FROM chair_locations 
-		 WHERE chair_id = ? AND created_at < ? 
-		 ORDER BY created_at DESC LIMIT 1`,
-		chair.ID, location.CreatedAt)
 	distanceIncrement := 0
 	if chair.LastLatitude != nil && chair.LastLongitude != nil {
 		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, *chair.LastLatitude, *chair.LastLongitude)
