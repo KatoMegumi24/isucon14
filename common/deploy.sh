@@ -30,7 +30,7 @@ for file in `\find etc -type f`; do
 done
 
 # アプリケーションのビルド
-APP_NAME= # ! ! ! ! ! 書き換える ! ! ! ! ! !
+APP_NAME=isuride
 # ディレクトリ構成確認して必要なら書き換える
 cd /home/isucon/webapp/go/
 
@@ -43,9 +43,9 @@ fi
 
 
 # ミドルウェア・Appの再起動
-#sudo systemctl restart mariadb
-#sudo systemctl reload nginx
-#sudo systemctl restart ${APP_NAME}.go
+sudo systemctl restart mysql
+sudo systemctl reload nginx
+sudo systemctl restart ${APP_NAME}-go
 
 # slow query logの有効化
 QUERY="
