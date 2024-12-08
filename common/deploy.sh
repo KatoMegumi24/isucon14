@@ -46,6 +46,7 @@ fi
 sudo systemctl restart mysql
 sudo systemctl reload nginx
 sudo systemctl restart ${APP_NAME}-go
+sudo systemctl restart isuride-matcher
 
 # slow query logの有効化
 QUERY="
