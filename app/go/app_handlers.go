@@ -4,12 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"
+)
+
+var (
+	rideStatusCache = make(map[string]*RideStatus)
 )
 
 type appPostUsersRequest struct {
@@ -383,6 +388,9 @@ func getLatestRideStatus(ctx context.Context, tx executableGet, rideID string) (
 	if err := tx.GetContext(ctx, &status, `SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1`, rideID); err != nil {
 		return "", err
 	}
+	if status != rideStatusCache[rideID].Status {
+		log.Printf("status: %v cached: %v\n", status, rideStatusCache[rideID].Status)
+	}
 	return status, nil
 }
 
@@ -482,6 +490,7 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	rideStatusCache[rideID] = &RideStatus{ID: ulid.Make().String(), RideID: rideID, Status: "MATCHING"}
 
 	var rideCount int
 	if err := tx.GetContext(ctx, &rideCount, `SELECT COUNT(*) FROM rides WHERE user_id = ? `, user.ID); err != nil {
@@ -698,6 +707,7 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	rideStatusCache[rideID] = &RideStatus{ID: ulid.Make().String(), RideID: rideID, Status: "COMPLETED"}
 
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE id = ?`, rideID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
