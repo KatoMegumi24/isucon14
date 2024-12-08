@@ -45,7 +45,7 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 	chairID := ulid.Make().String()
 	accessToken := secureRandomStr(32)
 
-	_, err := db.ExecContext(
+	_, err := db_sub.ExecContext(
 		ctx,
 		"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?)",
 		chairID, owner.ID, req.Name, req.Model, false, accessToken,
@@ -81,7 +81,7 @@ func chairPostActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := db.ExecContext(ctx, "UPDATE chairs SET is_active = ? WHERE id = ?", req.IsActive, chair.ID)
+	_, err := db_sub.ExecContext(ctx, "UPDATE chairs SET is_active = ? WHERE id = ?", req.IsActive, chair.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -111,6 +111,13 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	tx_sub, err := db_sub.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx_sub.Rollback()
+
 	chairLocationID := ulid.Make().String()
 	if _, err := tx.ExecContext(
 		ctx,
@@ -136,15 +143,15 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		 WHERE chair_id = ? AND created_at < ? 
 		 ORDER BY created_at DESC LIMIT 1`,
 		chair.ID, location.CreatedAt)
-	
+
 	// 距離の増分を計算
 	var distanceIncrement int
 	if err == nil {
 		// 前回の位置情報が存在する場合
 		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, prevLocation.Latitude, prevLocation.Longitude)
-		
+
 		// total_distanceを更新
-		_, err = tx.ExecContext(
+		_, err = tx_sub.ExecContext(
 			ctx,
 			`UPDATE chairs 
 			 SET total_distance = IFNULL(total_distance, 0) + ?,
