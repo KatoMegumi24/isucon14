@@ -142,10 +142,9 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		 WHERE chair_id = ? AND created_at < ? 
 		 ORDER BY created_at DESC LIMIT 1`,
 		chair.ID, location.CreatedAt)
-
 	distanceIncrement := 0
-	if chair.LastLatitude != 0 || chair.LastLongitude != 0 {
-		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, chair.LastLatitude, chair.LastLongitude)
+	if chair.LastLatitude != nil && chair.LastLongitude != nil {
+		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, *chair.LastLatitude, *chair.LastLongitude)
 	}
 
 	// chairの total_distance, last_latitude, last_longitudeを更新
