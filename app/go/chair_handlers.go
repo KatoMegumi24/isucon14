@@ -219,7 +219,6 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-
 	ride := &Ride{}
 	yetSentRideStatus := RideStatus{}
 	status := ""
