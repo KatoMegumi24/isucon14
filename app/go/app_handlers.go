@@ -475,6 +475,7 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rideStatusCache[rideID] = &RideStatus{ID: ulid.Make().String(), RideID: rideID, Status: "MATCHING"}
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)`,
@@ -691,6 +692,7 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rideStatusCache[rideID] = &RideStatus{ID: ulid.Make().String(), RideID: rideID, Status: "COMPLETED"}
 	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)`,
