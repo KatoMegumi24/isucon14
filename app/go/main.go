@@ -394,7 +394,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 			execArgs = append(execArgs, args[i+2]) // timestamp
 		}
 
-		if _, err := db_sub.ExecContext(ctx, query, execArgs...); err != nil {
+		if _, err := db.ExecContext(ctx, query, execArgs...); err != nil {
 			return fmt.Errorf("failed to update chair distances: %w", err)
 		}
 	}
