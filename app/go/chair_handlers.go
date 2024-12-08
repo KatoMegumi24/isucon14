@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -111,18 +112,29 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	chairLocationID := ulid.Make().String()
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)`,
-		chairLocationID, chair.ID, req.Latitude, req.Longitude,
-	); err != nil {
+	// 椅子の現在の位置を取得
+	currentLocation := &ChairLocation{}
+	if err := tx.GetContext(ctx, currentLocation, `SELECT * FROM chair_locations WHERE chair_id = ?`, chair.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	location := &ChairLocation{}
-	if err := tx.GetContext(ctx, location, `SELECT * FROM chair_locations WHERE id = ?`, chairLocationID); err != nil {
+	// 元の位置と新しい位置との移動距離を計算
+	distance := 0
+	if currentLocation.ID != "" {
+		distance = calculateDistance(currentLocation.Latitude, currentLocation.Longitude, req.Latitude, req.Longitude) + currentLocation.TotalDistance
+	}
+
+	// 新しい位置をupsert
+	var updatedAt time.Time
+	chairLocationID := ulid.Make().String()
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO chair_locations (id, chair_id, latitude, longitude, total_distance) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), total_distance = VALUES(total_distance) RETURNING updated_at`,
+		chairLocationID, chair.ID, req.Latitude, req.Longitude, distance,
+	).Scan(
+		&updatedAt,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -162,7 +174,7 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, &chairPostCoordinateResponse{
-		RecordedAt: location.CreatedAt.UnixMilli(),
+		RecordedAt: updatedAt.UnixMilli(),
 	})
 }
 
