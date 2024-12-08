@@ -388,7 +388,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 		var longitudeCases []string
 		var chairIDs []string
 
-		for i := 0; i < len(args); i += 5 {
+		for i := 0; i < len(args); i += 3 {
 			chairID := args[i].(string)
 			distanceCases = append(distanceCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
 			timestampCases = append(timestampCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
