@@ -25,7 +25,10 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-var db *sqlx.DB
+var (
+	db     *sqlx.DB
+	db_sub *sqlx.DB
+)
 
 func main() {
 	mux := setup()
@@ -68,18 +71,25 @@ func setup() http.Handler {
 	dbConfig.ParseTime = true
 	dbConfig.InterpolateParams = true
 
-	_db, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
+	dbConfig.Addr = "192.168.0.12:3306"
+	_db1, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
+	dbConfig.Addr = "192.168.0.13:3306"
+	_db2, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	if err != nil {
 		panic(err)
 	}
-	db = _db
+	db = _db1
+	db_sub = _db2
 
 	// プール内に保持できるアイドル接続数の制限を設定 (default: 2)
 	db.SetMaxIdleConns(1024)
+	db_sub.SetMaxIdleConns(1024)
 	// 接続してから再利用できる最大期間
 	db.SetConnMaxLifetime(0)
+	db_sub.SetConnMaxLifetime(0)
 	// アイドル接続してから再利用できる最大期間
 	db.SetConnMaxIdleTime(0)
+	db_sub.SetConnMaxIdleTime(0)
 
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2
@@ -167,12 +177,22 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
 		return
 	}
-	
-    // 各椅子の総移動距離を初期化
-    if err := initializeChairTotalDistance(ctx); err != nil {
-        writeError(w, http.StatusInternalServerError, err)
-        return
-    }
+
+	if out, err := exec.Command("ssh", "isucon@192.168.0.12", "/home/isucon/webapp/sql/init.sh").CombinedOutput(); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
+		return
+	}
+
+	if out, err := exec.Command("ssh", "isucon@192.168.0.13", "/home/isucon/webapp/sql/init.sh").CombinedOutput(); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
+		return
+	}
+
+	// 各椅子の総移動距離を初期化
+	if err := initializeChairTotalDistance(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	if _, err := db.ExecContext(ctx, "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'", req.PaymentServer); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -322,7 +342,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 	// バルクアップデート用のクエリを構築
 	var values []string
 	var args []interface{}
-	
+
 	for chairID, locs := range chairLocations {
 		var totalDistance int
 		for i := 1; i < len(locs); i++ {
@@ -370,7 +390,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 		var latitudeCases []string
 		var longitudeCases []string
 		var chairIDs []string
-		
+
 		for i := 0; i < len(args); i += 5 {
 			chairID := args[i].(string)
 			distanceCases = append(distanceCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
