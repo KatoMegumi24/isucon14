@@ -149,7 +149,7 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if req.Latitude == ride.DestinationLatitude && req.Longitude == ride.DestinationLongitude && status == "CARRYING" {
-				rideStatusCache[ride.ID] = &RideStatus{ID: ulid.Make().String(), RideID: ride.ID, Status: "PICKUP"}
+				rideStatusCache[ride.ID] = &RideStatus{ID: ulid.Make().String(), RideID: ride.ID, Status: "ARRIVED"}
 				if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "ARRIVED"); err != nil {
 					writeError(w, http.StatusInternalServerError, err)
 					return
