@@ -23,14 +23,23 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/motoki317/sc"
 )
 
 var db *sqlx.DB
 
 var (
 	// chairCache はアクセストークンをキーにした椅子のキャッシュ
-	chairCache = make(map[string]*Chair)
+	chairCache *sc.Cache[string, *Chair]
 )
+
+func getChair(ctx context.Context, accessToken string) (*Chair, error) {
+	chair := &Chair{}
+	if err := db.GetContext(ctx, chair, "SELECT * FROM chairs WHERE access_token = ?", accessToken); err != nil {
+		return nil, err
+	}
+	return chair, nil
+}
 
 func main() {
 	mux := setup()
@@ -87,15 +96,7 @@ func setup() http.Handler {
 	db.SetConnMaxIdleTime(0)
 
 	// キャッシュの初期化
-	{
-		chairs := []*Chair{}
-		if err := db.Select(&chairs, "SELECT * FROM chairs"); err != nil {
-			panic(err)
-		}
-		for _, chair := range chairs {
-			chairCache[chair.AccessToken] = chair
-		}
-	}
+	chairCache = sc.NewMust(getChair, 90*time.Second, 90*time.Second)
 
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2
@@ -183,12 +184,12 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
 		return
 	}
-	
-    // 各椅子の総移動距離を初期化
-    if err := initializeChairTotalDistance(ctx); err != nil {
-        writeError(w, http.StatusInternalServerError, err)
-        return
-    }
+
+	// 各椅子の総移動距離を初期化
+	if err := initializeChairTotalDistance(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	if _, err := db.ExecContext(ctx, "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'", req.PaymentServer); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -338,7 +339,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 	// バルクアップデート用のクエリを構築
 	var values []string
 	var args []interface{}
-	
+
 	for chairID, locs := range chairLocations {
 		var totalDistance int
 		for i := 1; i < len(locs); i++ {
@@ -386,7 +387,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 		var latitudeCases []string
 		var longitudeCases []string
 		var chairIDs []string
-		
+
 		for i := 0; i < len(args); i += 5 {
 			chairID := args[i].(string)
 			distanceCases = append(distanceCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))

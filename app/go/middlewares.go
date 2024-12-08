@@ -66,7 +66,11 @@ func chairAuthMiddleware(next http.Handler) http.Handler {
 		}
 		accessToken := c.Value
 		// cacheからとる
-		chair := chairCache[accessToken]
+		chair, err := chairCache.Get(ctx, accessToken)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 
 		// chair := &Chair{}
 		// err = db.GetContext(ctx, chair, "SELECT * FROM chairs WHERE access_token = ?", accessToken)

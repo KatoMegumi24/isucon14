@@ -78,7 +78,7 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 	// }
 
 	// キャッシュ更新
-	chairCache[accessToken] = chair
+	chairCache.Get(ctx, accessToken)
 
 	http.SetCookie(w, &http.Cookie{
 		Path:  "/",
@@ -114,7 +114,7 @@ func chairPostActivity(w http.ResponseWriter, r *http.Request) {
 
 	// キャッシュ更新
 	chair.IsActive = req.IsActive
-	chairCache[chair.AccessToken] = chair
+	chairCache.Get(ctx, chair.AccessToken)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -185,7 +185,7 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	chair.TotalDistanceUpdatedAt = &location.CreatedAt
 	chair.LastLatitude = &location.Latitude
 	chair.LastLongitude = &location.Longitude
-	chairCache[chair.AccessToken] = chair
+	chairCache.Get(ctx, chair.AccessToken)
 
 	ride := &Ride{}
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
