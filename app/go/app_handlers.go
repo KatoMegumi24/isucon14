@@ -188,7 +188,6 @@ type getAppRidesResponseItemChair struct {
 	Model string `json:"model"`
 }
 
-
 func appGetRides(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := ctx.Value("user").(*User)
@@ -322,14 +321,15 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	fares, err := calculateFaresForRides(ctx, tx, user.ID, completedRides)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	items := []getAppRidesResponseItem{}
 	for _, ride := range completedRides {
-		// TODO: ここがN+1のままになってる
-		fare, err := calculateDiscountedFare(ctx, tx, user.ID, &ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		fare := fares[ride.ID]
 		item := getAppRidesResponseItem{
 			ID:                    ride.ID,
 			PickupCoordinate:      Coordinate{Latitude: ride.PickupLatitude, Longitude: ride.PickupLongitude},
@@ -1099,4 +1099,66 @@ func calculateDiscountedFare(ctx context.Context, tx *sqlx.Tx, userID string, ri
 	discountedMeteredFare := max(meteredFare-discount, 0)
 
 	return initialFare + discountedMeteredFare, nil
+}
+
+// calculateFaresForRides は、completedRidesに対する割引後運賃を一括で計算するヘルパー関数です。
+// calculateDiscountedFareを直接変更せず、同等のロジックをここで実行することでN+1を回避します。
+func calculateFaresForRides(ctx context.Context, tx *sqlx.Tx, userID string, rides []Ride) (map[string]int, error) {
+	fares := make(map[string]int, len(rides))
+	if len(rides) == 0 {
+		return fares, nil
+	}
+
+	// rideごとにused_byに対応するクーポンを取得
+	rideIDs := make([]string, 0, len(rides))
+	for _, r := range rides {
+		rideIDs = append(rideIDs, r.ID)
+	}
+
+	query, args, err := sqlx.In("SELECT * FROM coupons WHERE used_by IN (?)", rideIDs)
+	if err != nil {
+		return nil, err
+	}
+	query = tx.Rebind(query)
+
+	var usedCoupons []Coupon
+	if err := tx.SelectContext(ctx, &usedCoupons, query, args...); err != nil {
+		return nil, err
+	}
+
+	// used_byをkeyにクーポンマップ化
+	couponMap := make(map[string]*Coupon, len(usedCoupons))
+	for i := range usedCoupons {
+		c := usedCoupons[i]
+		if c.UsedBy != nil {
+			couponMap[*c.UsedBy] = &c
+		}
+	}
+
+	// calculateDiscountedFareと同等の割引後計算ロジック
+	// rideがある場合:
+	//   1. couponMapから該当クーポン取得
+	//   2. 距離計算 -> fare
+	//   3. クーポン割引適用
+	//   fare = initialFare + max(meteredFare - discount, 0)
+
+	for _, r := range rides {
+		discount := 0
+		// coupon取得
+		if c, ok := couponMap[r.ID]; ok {
+			discount = c.Discount
+		} else {
+			// クーポンなしの場合、割引0として処理
+		}
+
+		// 距離計算
+		dist := calculateDistance(r.PickupLatitude, r.PickupLongitude, r.DestinationLatitude, r.DestinationLongitude)
+		meteredFare := farePerDistance * dist
+		discounted := max(meteredFare-discount, 0)
+		fare := initialFare + discounted
+
+		fares[r.ID] = fare
+	}
+
+	return fares, nil
 }
