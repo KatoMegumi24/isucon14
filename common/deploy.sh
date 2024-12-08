@@ -30,7 +30,7 @@ for file in `\find etc -type f`; do
 done
 
 # アプリケーションのビルド
-APP_NAME= # ! ! ! ! ! 書き換える ! ! ! ! ! !
+APP_NAME=isuride
 # ディレクトリ構成確認して必要なら書き換える
 cd /home/isucon/webapp/go/
 
