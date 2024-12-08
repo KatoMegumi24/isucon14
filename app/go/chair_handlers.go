@@ -127,31 +127,36 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 前回位置を取得し距離を計算
+	// 前回位置を取得して差分距離を計算し、chairsテーブルに累積距離を反映する
 	var prevLat, prevLon int
-	var hasPrev bool
 	err = tx.QueryRowContext(
 		ctx,
-		`SELECT latitude, longitude FROM chair_locations 
-		 WHERE chair_id = ? AND created_at < ?
+		`SELECT latitude, longitude, created_at FROM chair_locations 
+		 WHERE chair_id = ? AND created_at < ? 
 		 ORDER BY created_at DESC LIMIT 1`,
-		chair.ID, location.CreatedAt).Scan(&prevLat, &prevLon)
-	if err != nil && err != sql.ErrNoRows {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	} else if err == nil {
-		hasPrev = true
-	}
+		chair.ID, location.CreatedAt,
+	).Scan(&prevLat, &prevLon)
 
-	if hasPrev {
-		distanceIncrement := abs(location.Latitude - prevLat) + abs(location.Longitude - prevLon)
-		_, err = tx.ExecContext(
-			ctx,
-			`UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?`,
-			distanceIncrement, chair.ID)
-		if err != nil {
+	if err != nil {
+		if err != sql.ErrNoRows {
 			writeError(w, http.StatusInternalServerError, err)
 			return
+		}
+		// 初回登録の場合、距離更新不要
+	} else {
+		distanceIncrement := abs(location.Latitude - prevLat) + abs(location.Longitude - prevLon)
+		if distanceIncrement > 0 {
+			_, err = tx.ExecContext(
+				ctx,
+				`UPDATE chairs 
+				 SET total_distance = total_distance + ?, total_distance_updated_at = CURRENT_TIMESTAMP(6) 
+				 WHERE id = ?`,
+				distanceIncrement, chair.ID,
+			)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
 		}
 	}
 

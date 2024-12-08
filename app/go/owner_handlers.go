@@ -195,10 +195,11 @@ func ownerGetChairs(w http.ResponseWriter, r *http.Request) {
 	owner := ctx.Value("owner").(*Owner)
 
 	chairs := []chairWithDetail{}
+	// total_distance, total_distance_updated_at を chairs テーブルから直接取得
 	if err := db.SelectContext(ctx, &chairs, `SELECT
 		id, owner_id, name, access_token, model, is_active, created_at, updated_at, total_distance, total_distance_updated_at
-	FROM chairs
-	WHERE owner_id = ?`, owner.ID); err != nil {
+		FROM chairs
+		WHERE owner_id = ?`, owner.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -221,3 +222,4 @@ func ownerGetChairs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, res)
 }
+
