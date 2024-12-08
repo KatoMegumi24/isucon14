@@ -46,16 +46,33 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 	chairID := ulid.Make().String()
 	accessToken := secureRandomStr(32)
 
+	// _, err := db.ExecContext(
+	// 	ctx,
+	// 	"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?)",
+	// 	chairID, owner.ID, req.Name, req.Model, false, accessToken,
+	// )
+	// if err != nil {
+	// 	writeError(w, http.StatusInternalServerError, err)
+	// 	return
+	// }
+
+	// // selectで今追加したchairを取得(FIXME: ↑でReturningが使えなかった)
+	// chair := &Chair{}
+	// if err := db.GetContext(ctx, chair, "SELECT * FROM chairs WHERE id = ?", chairID); err != nil {
+	// 	writeError(w, http.StatusInternalServerError, err)
+	// 	return
+	// }
+
+	// returiningを使って、追加したchairを取得
 	chair := &Chair{}
-	err := db.QueryRowContext(
-		ctx,
-		"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?)  RETURNING id, owner_id, name, model, is_active, access_token, created_at, updated_at",
-		chairID, owner.ID, req.Name, req.Model, false, accessToken,
-	).Scan(
-		&chair.ID, &chair.OwnerID, &chair.Name, &chair.Model, &chair.IsActive, &chair.AccessToken, &chair.CreatedAt, &chair.UpdatedAt,
-		&chair.TotalDistance, &chair.TotalDistanceUpdatedAt, &chair.LastLongitude, &chair.LastLatitude,
-	)
-	if err != nil {
+	if err := db.QueryRow("INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?) RETURNING id, owner_id, name, model, is_active, access_token", chairID, owner.ID, req.Name, req.Model, false, accessToken).Scan(
+		&chair.ID,
+		&chair.OwnerID,
+		&chair.Name,
+		&chair.Model,
+		&chair.IsActive,
+		&chair.AccessToken,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
