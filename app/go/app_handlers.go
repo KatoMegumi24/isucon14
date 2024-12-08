@@ -188,7 +188,6 @@ type getAppRidesResponseItemChair struct {
 	Model string `json:"model"`
 }
 
-
 func appGetRides(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := ctx.Value("user").(*User)
@@ -769,7 +768,9 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, user.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusOK, &appGetNotificationResponse{
-				RetryAfterMs: 30,
+				// 状態変更から3秒以内に通知されている必要があるため、2秒後にリトライする
+				// see: https://gist.github.com/wtks/8eadf471daf7cb59942de02273ce7884#通知エンドポイント
+				RetryAfterMs: 2000,
 			})
 			return
 		}
@@ -816,7 +817,9 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: ride.CreatedAt.UnixMilli(),
 			UpdateAt:  ride.UpdatedAt.UnixMilli(),
 		},
-		RetryAfterMs: 30,
+		// 状態変更から3秒以内に通知されている必要があるため、2秒後にリトライする
+		// see: https://gist.github.com/wtks/8eadf471daf7cb59942de02273ce7884#通知エンドポイント
+		RetryAfterMs: 2000,
 	}
 
 	if ride.ChairID.Valid {
