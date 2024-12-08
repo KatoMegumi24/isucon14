@@ -127,40 +127,36 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 前回位置取得(なければエラーはRowなし)
-	var prevLat, prevLon int
-	var hasPrev bool
-	err = tx.QueryRowContext(
+	// 前回の位置情報を取得
+	var prevLocation ChairLocation
+	err = tx.GetContext(
 		ctx,
-		`SELECT latitude, longitude 
-		 FROM chair_locations 
+		&prevLocation,
+		`SELECT * FROM chair_locations 
 		 WHERE chair_id = ? AND created_at < ? 
 		 ORDER BY created_at DESC LIMIT 1`,
-		chair.ID, location.CreatedAt).Scan(&prevLat, &prevLon)
-	if err != nil {
-		if err != sql.ErrNoRows {
+		chair.ID, location.CreatedAt)
+	
+	// 距離の増分を計算
+	var distanceIncrement int
+	if err == nil {
+		// 前回の位置情報が存在する場合
+		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, prevLocation.Latitude, prevLocation.Longitude)
+		
+		// total_distanceを更新
+		_, err = tx.ExecContext(
+			ctx,
+			`UPDATE chairs 
+			 SET total_distance = IFNULL(total_distance, 0) + ?,
+			     total_distance_updated_at = ?
+			 WHERE id = ?`,
+			distanceIncrement, location.CreatedAt, chair.ID)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-	} else {
-		hasPrev = true
-	}
-
-	// distanceIncrement計算
-	distanceIncrement := 0
-	if hasPrev {
-		distanceIncrement = abs(location.Latitude - prevLat) + abs(location.Longitude - prevLon)
-	}
-
-	// total_distanceとtotal_distance_updated_at更新
-	// total_distance_updated_atは常に最新位置のcreated_atを反映する
-	_, err = tx.ExecContext(
-		ctx,
-		`UPDATE chairs 
-		 SET total_distance = total_distance + ?, total_distance_updated_at = ? 
-		 WHERE id = ?`,
-		distanceIncrement, location.CreatedAt, chair.ID)
-	if err != nil {
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		// sql.ErrNoRows以外のエラーの場合
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
