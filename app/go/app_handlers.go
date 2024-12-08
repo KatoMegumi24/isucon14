@@ -222,6 +222,10 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		if err := tx_sub.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, &getAppRidesResponse{Rides: []getAppRidesResponseItem{}})
 		return
 	}
@@ -252,7 +256,7 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 		Status string `db:"status"`
 	}
 	latestStatuses := []latestStatusRow{}
-	if err := tx.SelectContext(ctx, &latestStatuses, query, args...); err != nil {
+	if err := tx_sub.SelectContext(ctx, &latestStatuses, query, args...); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -272,6 +276,10 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 
 	if len(completedRides) == 0 {
 		if err := tx.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := tx_sub.Commit(); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -361,6 +369,10 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := tx_sub.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -573,6 +585,10 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if err := tx_sub.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	writeJSON(w, http.StatusAccepted, &appPostRidesResponse{
 		RideID: rideID,
@@ -773,6 +789,10 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if err := tx_sub.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, &appPostRideEvaluationResponse{
 		CompletedAt: ride.UpdatedAt.UnixMilli(),
@@ -913,6 +933,10 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := tx_sub.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -1153,6 +1177,10 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := tx_sub.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
