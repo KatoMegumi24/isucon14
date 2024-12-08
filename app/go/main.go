@@ -330,21 +330,49 @@ func initializeChairTotalDistance(ctx context.Context) error {
 		args = append(args, chairID, totalDistance, updatedAt)
 	}
 
-	// バルクアップデートを実行
+	// バルクアップデートのクエリを修正
 	if len(values) > 0 {
-		query := fmt.Sprintf(
-			`UPDATE chairs SET 
-				total_distance = CASE id 
-					WHEN ? THEN ? 
-					END,
-				total_distance_updated_at = CASE id 
-					WHEN ? THEN ? 
-					END
-			WHERE id IN (?)`,
-			strings.Join(values, " "))
+		query := `
+			UPDATE chairs 
+			SET total_distance = CASE id 
+				%s
+				END,
+			total_distance_updated_at = CASE id 
+				%s
+				END
+			WHERE id IN (%s)`
+
+		// WHENケースを構築
+		var distanceCases []string
+		var timestampCases []string
+		var chairIDs []string
 		
-		if _, err := db.ExecContext(ctx, query, args...); err != nil {
-			return err
+		for i := 0; i < len(args); i += 3 {
+			chairID := args[i].(string)
+			distanceCases = append(distanceCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
+			timestampCases = append(timestampCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
+			chairIDs = append(chairIDs, "'"+chairID+"'")
+		}
+
+		// 最終的なクエリを組み立て
+		query = fmt.Sprintf(
+			query,
+			strings.Join(distanceCases, "\n"),
+			strings.Join(timestampCases, "\n"),
+			strings.Join(chairIDs, ","),
+		)
+
+		// パラメータを再構築
+		var execArgs []interface{}
+		for i := 0; i < len(args); i += 3 {
+			execArgs = append(execArgs, args[i+1]) // distance
+		}
+		for i := 0; i < len(args); i += 3 {
+			execArgs = append(execArgs, args[i+2]) // timestamp
+		}
+
+		if _, err := db.ExecContext(ctx, query, execArgs...); err != nil {
+			return fmt.Errorf("failed to update chair distances: %w", err)
 		}
 	}
 
