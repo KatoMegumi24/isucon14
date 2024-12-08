@@ -127,6 +127,40 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 前回の位置情報を取得
+	var prevLocation ChairLocation
+	err = tx.GetContext(
+		ctx,
+		&prevLocation,
+		`SELECT * FROM chair_locations 
+		 WHERE chair_id = ? AND created_at < ? 
+		 ORDER BY created_at DESC LIMIT 1`,
+		chair.ID, location.CreatedAt)
+	
+	// 距離の増分を計算
+	var distanceIncrement int
+	if err == nil {
+		// 前回の位置情報が存在する場合
+		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, prevLocation.Latitude, prevLocation.Longitude)
+		
+		// total_distanceを更新
+		_, err = tx.ExecContext(
+			ctx,
+			`UPDATE chairs 
+			 SET total_distance = IFNULL(total_distance, 0) + ?,
+			     total_distance_updated_at = ?
+			 WHERE id = ?`,
+			distanceIncrement, location.CreatedAt, chair.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		// sql.ErrNoRows以外のエラーの場合
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	ride := &Ride{}
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -308,13 +342,11 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Status {
-	// Acknowledge the ride
 	case "ENROUTE":
 		if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "ENROUTE"); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-	// After Picking up user
 	case "CARRYING":
 		status, err := getLatestRideStatus(ctx, tx, ride.ID)
 		if err != nil {
@@ -331,6 +363,7 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeError(w, http.StatusBadRequest, errors.New("invalid status"))
+		return
 	}
 
 	if err := tx.Commit(); err != nil {
