@@ -770,7 +770,7 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, &appGetNotificationResponse{
 				// 状態変更から3秒以内に通知されている必要があるため、2秒後にリトライする
 				// see: https://gist.github.com/wtks/8eadf471daf7cb59942de02273ce7884#通知エンドポイント
-				RetryAfterMs: 2000,
+				RetryAfterMs: 2800,
 			})
 			return
 		}
@@ -819,7 +819,7 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 		},
 		// 状態変更から3秒以内に通知されている必要があるため、2秒後にリトライする
 		// see: https://gist.github.com/wtks/8eadf471daf7cb59942de02273ce7884#通知エンドポイント
-		RetryAfterMs: 2000,
+		RetryAfterMs: 2800,
 	}
 
 	if ride.ChairID.Valid {
