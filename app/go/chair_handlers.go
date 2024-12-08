@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -117,18 +118,42 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	createdAt := time.Now()
 	chairLocationID := ulid.Make().String()
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)`,
-		chairLocationID, chair.ID, req.Latitude, req.Longitude,
+		`INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) 
+		 VALUES (?, ?, ?, ?, ?)`,
+		chairLocationID, chair.ID, req.Latitude, req.Longitude, createdAt,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	location := &ChairLocation{}
-	if err := tx.GetContext(ctx, location, `SELECT * FROM chair_locations WHERE id = ?`, chairLocationID); err != nil {
+	location := &ChairLocation{
+		ID:        chairLocationID,
+		ChairID:   chair.ID,
+		Latitude:  req.Latitude,
+		Longitude: req.Longitude,
+		CreatedAt: createdAt,
+	}
+
+	distanceIncrement := 0
+	if chair.LastLatitude != nil && chair.LastLongitude != nil {
+		distanceIncrement = calculateDistance(location.Latitude, location.Longitude, *chair.LastLatitude, *chair.LastLongitude)
+	}
+
+	// chairの total_distance, last_latitude, last_longitudeを更新
+	_, err = tx.ExecContext(
+		ctx,
+		`UPDATE chairs 
+		 SET total_distance = IFNULL(total_distance, 0) + ?,
+		     total_distance_updated_at = ?,
+		     last_latitude = ?,
+		     last_longitude = ?
+		 WHERE id = ?`,
+		distanceIncrement, location.CreatedAt, location.Latitude, location.Longitude, chair.ID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -314,13 +339,11 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Status {
-	// Acknowledge the ride
 	case "ENROUTE":
 		if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "ENROUTE"); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-	// After Picking up user
 	case "CARRYING":
 		status, err := getLatestRideStatus(ctx, tx, ride.ID)
 		if err != nil {
@@ -337,6 +360,7 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeError(w, http.StatusBadRequest, errors.New("invalid status"))
+		return
 	}
 
 	if err := tx.Commit(); err != nil {
