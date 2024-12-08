@@ -12,6 +12,10 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
+var (
+	rideStatusCache = make(map[string]*RideStatus)
+)
+
 type appPostUsersRequest struct {
 	Username       string  `json:"username"`
 	FirstName      string  `json:"firstname"`
@@ -187,7 +191,6 @@ type getAppRidesResponseItemChair struct {
 	Name  string `json:"name"`
 	Model string `json:"model"`
 }
-
 
 func appGetRides(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -380,10 +383,7 @@ type executableGet interface {
 }
 
 func getLatestRideStatus(ctx context.Context, tx executableGet, rideID string) (string, error) {
-	status := ""
-	if err := tx.GetContext(ctx, &status, `SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1`, rideID); err != nil {
-		return "", err
-	}
+	status := rideStatusCache[rideID].Status
 	return status, nil
 }
 
