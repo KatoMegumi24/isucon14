@@ -30,11 +30,6 @@ CREATE TABLE chairs
   model        TEXT         NOT NULL COMMENT '椅子のモデル',
   is_active    TINYINT(1)   NOT NULL COMMENT '配椅子受付中かどうか',
   access_token VARCHAR(255) NOT NULL COMMENT 'アクセストークン',
-
-  -- 追加分
-  total_distance            INT NOT NULL DEFAULT 0 COMMENT '累積走行距離',
-  total_distance_updated_at DATETIME(6) NULL       COMMENT '累積距離更新日時',
-
   created_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
   updated_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新日時',
   PRIMARY KEY (id)
