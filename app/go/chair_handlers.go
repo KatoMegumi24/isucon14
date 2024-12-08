@@ -49,7 +49,7 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 	chair := &Chair{}
 	err := db.QueryRowContext(
 		ctx,
-		"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+		"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?)  RETURNING id, owner_id, name, model, is_active, access_token, created_at, updated_at",
 		chairID, owner.ID, req.Name, req.Model, false, accessToken,
 	).Scan(
 		&chair.ID, &chair.OwnerID, &chair.Name, &chair.Model, &chair.IsActive, &chair.AccessToken, &chair.CreatedAt, &chair.UpdatedAt,
