@@ -49,12 +49,12 @@ sudo systemctl restart ${APP_NAME}-go
 sudo systemctl restart isuride-matcher
 
 # slow query logの有効化
-QUERY="
-set global slow_query_log_file = '/var/log/mysql/mysql-slow.log';
-set global long_query_time = 0;
-set global slow_query_log = ON;
-"
-echo $QUERY | sudo mysql -uroot
+# QUERY="
+# set global slow_query_log_file = '/var/log/mysql/mysql-slow.log';
+# set global long_query_time = 0;
+# set global slow_query_log = ON;
+# "
+# echo $QUERY | sudo mysql -uroot
 
 # log permission
 sudo chmod -R 777 /var/log/nginx
