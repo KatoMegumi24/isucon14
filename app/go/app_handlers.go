@@ -389,7 +389,7 @@ func getLatestRideStatus(ctx context.Context, tx executableGet, rideID string) (
 		return "", err
 	}
 	if status != rideStatusCache[rideID].Status {
-		log.Printf("status: %v cached: %v", status, rideStatusCache[rideID].Status)
+		log.Printf("status: %v cached: %v\n", status, rideStatusCache[rideID].Status)
 	}
 	return status, nil
 }
