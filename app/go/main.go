@@ -68,7 +68,10 @@ func setup() http.Handler {
 	dbConfig.ParseTime = true
 	dbConfig.InterpolateParams = true
 
+	dbConfig.Addr = "192.168.0.12:3306"
 	_db, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
+	// dbConfig.Addr = "192.168.0.13:3306"
+	// _db, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	if err != nil {
 		panic(err)
 	}
@@ -167,12 +170,12 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
 		return
 	}
-	
-    // 各椅子の総移動距離を初期化
-    if err := initializeChairTotalDistance(ctx); err != nil {
-        writeError(w, http.StatusInternalServerError, err)
-        return
-    }
+
+	// 各椅子の総移動距離を初期化
+	if err := initializeChairTotalDistance(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	if _, err := db.ExecContext(ctx, "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'", req.PaymentServer); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -322,7 +325,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 	// バルクアップデート用のクエリを構築
 	var values []string
 	var args []interface{}
-	
+
 	for chairID, locs := range chairLocations {
 		var totalDistance int
 		for i := 1; i < len(locs); i++ {
@@ -359,7 +362,7 @@ func initializeChairTotalDistance(ctx context.Context) error {
 		var distanceCases []string
 		var timestampCases []string
 		var chairIDs []string
-		
+
 		for i := 0; i < len(args); i += 3 {
 			chairID := args[i].(string)
 			distanceCases = append(distanceCases, fmt.Sprintf("WHEN '%s' THEN ?", chairID))
