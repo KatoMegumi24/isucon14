@@ -53,6 +53,7 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 		chairID, owner.ID, req.Name, req.Model, false, accessToken,
 	).Scan(
 		&chair.ID, &chair.OwnerID, &chair.Name, &chair.Model, &chair.IsActive, &chair.AccessToken, &chair.CreatedAt, &chair.UpdatedAt,
+		&chair.TotalDistance, &chair.TotalDistanceUpdatedAt, &chair.LastLongitude, &chair.LastLatitude,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
