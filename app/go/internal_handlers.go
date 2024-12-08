@@ -4,18 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-
-	"github.com/oklog/ulid/v2"
 )
-
-// internalGetMatching: 500msに一度呼ばれる想定。待っている全てのライドに対して椅子を割り当てる。
-// 改善点:
-// - 複数ライドと複数椅子に対して、個別に最適な組み合わせではなく、
-//   全体最適を求めるためにハンガリアン法でマッチングを行う。
-// - 速度や距離を考慮した到着予測時間(コスト)に基づき、
-//   合計の到着時間が最小となるような割り当てを一括決定する。
-// - 利用可能な椅子とライドが同数でない場合は、マトリックスを拡張して不整合を解決し、
-//   一部割り当てをしないライドが発生しても良いように対応する。
 
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -47,7 +36,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 空いている椅子を取得（他のライドに割り当てられていない＆is_active = true）
+	// 空いている椅子を取得
 	var chairsWithModel []struct {
 		ID       string        `db:"id"`
 		Model    string        `db:"model"`
@@ -84,11 +73,9 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}{}
 	for _, c := range chairsWithModel {
 		if !c.LastLat.Valid || !c.LastLon.Valid {
-			// 位置情報がない椅子は割り当て困難なのでスキップ
 			continue
 		}
 		if c.Speed <= 0 {
-			// 異常なspeedならスキップ
 			continue
 		}
 		freeChairs = append(freeChairs, struct {
@@ -105,14 +92,13 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(freeChairs) == 0 {
-		// 空いている椅子がなければ何もできない
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// コスト行列作成: 行=Rides, 列=Chairs
-	// コスト=到着予測時間(dist/speed)。speed>0、dist≥0なので問題なし。
-	// 行列は正方行列にするため、rides, freeChairsの大きい方に合わせてpaddingを行う。
+	// costMatrix作成
+	// cost = (dist(chair→pickup) + dist(pickup→destination)) / speed
+	// これにより、長距離移動が必要なユーザーには、速い椅子が有利になる
 	n := len(rides)
 	m := len(freeChairs)
 	size := n
@@ -120,30 +106,26 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		size = m
 	}
 
-	// largeCost: 非割り当て用の大きなコスト (マッチしない場合を表現)
 	const largeCost = 9999999
-
 	costMatrix := make([][]int, size)
 	for i := 0; i < size; i++ {
 		costMatrix[i] = make([]int, size)
 		for j := 0; j < size; j++ {
 			if i < n && j < m {
-				// dist計算
-				dist := calculateDistance(freeChairs[j].LastLat, freeChairs[j].LastLon, rides[i].PickupLatitude, rides[i].PickupLongitude)
-				timeEstimate := dist / freeChairs[j].Speed
-				costMatrix[i][j] = timeEstimate
+				chair := freeChairs[j]
+				ride := rides[i]
+				distToPickup := calculateDistance(chair.LastLat, chair.LastLon, ride.PickupLatitude, ride.PickupLongitude)
+				distToDestination := calculateDistance(ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
+				totalDist := distToPickup + distToDestination
+				costMatrix[i][j] = totalDist / chair.Speed
 			} else {
-				// padding部分はマッチ不可として大コスト
 				costMatrix[i][j] = largeCost
 			}
 		}
 	}
 
-	// ハンガリアン法で最小コスト割り当てを求める
 	assignment := hungarianMethod(costMatrix)
 
-	// assignment[i] = j で、i行(ride)に対する割り当て椅子列jを表す
-	// jがm未満でかつcostがlargeCostでなければ有効なマッチングとする
 	assignments := []struct {
 		RideID  string
 		ChairID string
@@ -151,7 +133,6 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 
 	for i, j := range assignment {
 		if i < n && j >= 0 && j < m && costMatrix[i][j] < largeCost {
-			// マッチング成立
 			assignments = append(assignments, struct {
 				RideID  string
 				ChairID string
@@ -160,25 +141,15 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(assignments) == 0 {
-		// 割り当てできなかった
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// 割り当て結果をDBに反映
 	for _, asg := range assignments {
 		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", asg.ChairID, asg.RideID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		// newStatusID := ulidMake()
-		// if _, err := tx.ExecContext(ctx,
-		// 	"INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
-		// 	newStatusID, asg.RideID, "ENROUTE",
-		// ); err != nil {
-		// 	writeError(w, http.StatusInternalServerError, err)
-		// 	return
-		// }
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -189,16 +160,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ulidMakeは他ファイルと同等のULID生成関数とする
-func ulidMake() string {
-	return ulid.Make().String()
-}
-
-// ハンガリアン法による最小割り当て計算 (簡易実装例)
-// costMatrixは正方行列
-// 戻り値: assignment[i]=jは行iが列jに割り当てられたことを示す。
-// 割り当てがない場合は-1。
-// 以下は最小限のハンガリアン法参考実装例であり、本番環境での最適化は別途考慮が必要。
+// ハンガリアン法の実装例（前回答参照）
 func hungarianMethod(costMatrix [][]int) []int {
 	n := len(costMatrix)
 	u := make([]int, n+1)
