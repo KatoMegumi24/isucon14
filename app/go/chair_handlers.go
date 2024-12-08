@@ -166,9 +166,10 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		// sql.ErrNoRows以外のエラーの場合
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	ride := &Ride{}
