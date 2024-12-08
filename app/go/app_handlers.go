@@ -199,6 +199,13 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	tx_sub, err := db_sub.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx_sub.Rollback()
+
 	rides := []Ride{}
 	if err := tx.SelectContext(
 		ctx,
@@ -288,10 +295,10 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		queryChairs = tx.Rebind(queryChairs)
+		queryChairs = tx_sub.Rebind(queryChairs)
 
 		chairs := []Chair{}
-		if err := tx.SelectContext(ctx, &chairs, queryChairs, argsChairs...); err != nil {
+		if err := tx_sub.SelectContext(ctx, &chairs, queryChairs, argsChairs...); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -797,6 +804,13 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	tx_sub, err := db_sub.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+
 	ride := &Ride{}
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, user.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -857,7 +871,7 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 
 	if ride.ChairID.Valid {
 		chair := &Chair{}
-		if err := tx.GetContext(ctx, chair, `SELECT * FROM chairs WHERE id = ?`, ride.ChairID); err != nil {
+		if err := tx_sub.GetContext(ctx, chair, `SELECT * FROM chairs WHERE id = ?`, ride.ChairID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -1003,8 +1017,15 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	tx_sub, err := db_sub.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx_sub.Rollback()
+
 	chairs := []Chair{}
-	err = tx.SelectContext(
+	err = tx_sub.SelectContext(
 		ctx,
 		&chairs,
 		`SELECT * FROM chairs`,
