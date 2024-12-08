@@ -9,6 +9,14 @@ import (
 )
 
 // internalGetMatching: 500msに一度呼ばれる想定。待っている全てのライドに対して椅子を割り当てる。
+// 改善点:
+// - 複数ライドと複数椅子に対して、個別に最適な組み合わせではなく、
+//   全体最適を求めるためにハンガリアン法でマッチングを行う。
+// - 速度や距離を考慮した到着予測時間(コスト)に基づき、
+//   合計の到着時間が最小となるような割り当てを一括決定する。
+// - 利用可能な椅子とライドが同数でない場合は、マトリックスを拡張して不整合を解決し、
+//   一部割り当てをしないライドが発生しても良いように対応する。
+
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -19,9 +27,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// MATCHING状態でまだchair_idがNULLのライドを全て取得
-	// ライドの最新ステータスがMATCHINGでchair_idがNULLのものを取得する
-	// (最新ステータス取得にはサブクエリを使用)
+	// MATCHING状態でchair_idがNULLのライドを全て取得
 	rides := []Ride{}
 	err = tx.SelectContext(ctx, &rides, `
 		SELECT r.* FROM rides r
@@ -33,8 +39,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		ORDER BY r.created_at
 	`)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// 待ちライドなし
+		if errors.Is(err, sql.ErrNoRows) || len(rides) == 0 {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -42,23 +47,15 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(rides) == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	// すでに他のライド(未COMPLETED)に割り当てられていない、かつis_active = trueな椅子を取得
-	// 最新ステータスがCOMPLETED以外のライドを持つ椅子は除外
-	// 以下のサブクエリで "chairs" の中から自由なもののみ抽出
-	chairsWithModel := []struct {
+	// 空いている椅子を取得（他のライドに割り当てられていない＆is_active = true）
+	var chairsWithModel []struct {
 		ID       string        `db:"id"`
 		Model    string        `db:"model"`
 		IsActive bool          `db:"is_active"`
 		LastLat  sql.NullInt64 `db:"last_latitude"`
 		LastLon  sql.NullInt64 `db:"last_longitude"`
 		Speed    int           `db:"speed"`
-	}{}
-
+	}
 	err = tx.SelectContext(ctx, &chairsWithModel, `
 		SELECT c.id, c.model, c.is_active, c.last_latitude, c.last_longitude, cm.speed
 		FROM chairs c
@@ -79,19 +76,22 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// chair_id→chair情報マップ
-	freeChairs := make(map[string]*struct {
+	freeChairs := []struct {
 		ID      string
 		Speed   int
 		LastLat int
 		LastLon int
-	})
+	}{}
 	for _, c := range chairsWithModel {
 		if !c.LastLat.Valid || !c.LastLon.Valid {
-			// 位置情報がない椅子は割り当て困難なのでスキップする（要件次第で扱いを決める）
+			// 位置情報がない椅子は割り当て困難なのでスキップ
 			continue
 		}
-		freeChairs[c.ID] = &struct {
+		if c.Speed <= 0 {
+			// 異常なspeedならスキップ
+			continue
+		}
+		freeChairs = append(freeChairs, struct {
 			ID      string
 			Speed   int
 			LastLat int
@@ -101,7 +101,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 			Speed:   c.Speed,
 			LastLat: int(c.LastLat.Int64),
 			LastLon: int(c.LastLon.Int64),
-		}
+		})
 	}
 
 	if len(freeChairs) == 0 {
@@ -110,48 +110,52 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ライドごとに最適な椅子を探す
-	// 到着予測時間 = (マンハッタン距離) / speed
-	// speedが大きいほど早く到着する
-	// 最小到着時間の椅子を選択
+	// コスト行列作成: 行=Rides, 列=Chairs
+	// コスト=到着予測時間(dist/speed)。speed>0、dist≥0なので問題なし。
+	// 行列は正方行列にするため、rides, freeChairsの大きい方に合わせてpaddingを行う。
+	n := len(rides)
+	m := len(freeChairs)
+	size := n
+	if m > size {
+		size = m
+	}
+
+	// largeCost: 非割り当て用の大きなコスト (マッチしない場合を表現)
+	const largeCost = 9999999
+
+	costMatrix := make([][]int, size)
+	for i := 0; i < size; i++ {
+		costMatrix[i] = make([]int, size)
+		for j := 0; j < size; j++ {
+			if i < n && j < m {
+				// dist計算
+				dist := calculateDistance(freeChairs[j].LastLat, freeChairs[j].LastLon, rides[i].PickupLatitude, rides[i].PickupLongitude)
+				timeEstimate := dist / freeChairs[j].Speed
+				costMatrix[i][j] = timeEstimate
+			} else {
+				// padding部分はマッチ不可として大コスト
+				costMatrix[i][j] = largeCost
+			}
+		}
+	}
+
+	// ハンガリアン法で最小コスト割り当てを求める
+	assignment := hungarianMethod(costMatrix)
+
+	// assignment[i] = j で、i行(ride)に対する割り当て椅子列jを表す
+	// jがm未満でかつcostがlargeCostでなければ有効なマッチングとする
 	assignments := []struct {
 		RideID  string
 		ChairID string
 	}{}
 
-	for _, ride := range rides {
-		bestChairID := ""
-		bestTime := 1 << 30 // 大きな値で初期化
-		for cid, ch := range freeChairs {
-			dist := calculateDistance(ch.LastLat, ch.LastLon, ride.PickupLatitude, ride.PickupLongitude)
-			if ch.Speed <= 0 {
-				// speedが0など異常値の場合スキップ
-				continue
-			}
-			timeEstimate := dist / ch.Speed
-			// 同着時は最初のものを採用するが、必要なら速度優先などのルールを追加可
-			if timeEstimate < bestTime {
-				bestTime = timeEstimate
-				bestChairID = cid
-			}
-		}
-
-		if bestChairID == "" {
-			// 適した椅子が無い場合は割り当てなし
-			continue
-		}
-
-		// 割り当て決定
-		assignments = append(assignments, struct {
-			RideID  string
-			ChairID string
-		}{RideID: ride.ID, ChairID: bestChairID})
-
-		// 割り当てた椅子はもう使えないのでfreeChairsから削除
-		delete(freeChairs, bestChairID)
-		if len(freeChairs) == 0 {
-			// もう椅子が無いのでこれ以上割り当て不可能
-			break
+	for i, j := range assignment {
+		if i < n && j >= 0 && j < m && costMatrix[i][j] < largeCost {
+			// マッチング成立
+			assignments = append(assignments, struct {
+				RideID  string
+				ChairID string
+			}{RideID: rides[i].ID, ChairID: freeChairs[j].ID})
 		}
 	}
 
@@ -162,26 +166,12 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 割り当て結果をDBに反映
-	// 一括でUPDATEとstatus挿入
-	// ステータスをENROUTEに変更
-	// Rides.chair_idを更新
-	var rideIDs []string
-	params := []interface{}{}
 	for _, asg := range assignments {
-		rideIDs = append(rideIDs, asg.RideID)
-		// Rides の更新
-		params = append(params, asg.ChairID, asg.RideID)
-	}
-	// 一括UPDATE: バルクUPDATEは複雑なので個別UPDATEする
-	// パフォーマンスチューニングするならバルクINSERT、UPDATEを検討
-	for _, asg := range assignments {
-		// rideにchair_idを割り当て
 		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", asg.ChairID, asg.RideID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		// ステータスをENROUTEに追加
-		newStatusID := ulidMake() // ulidMake()は既存のulid生成関数と同等と仮定
+		newStatusID := ulidMake()
 		if _, err := tx.ExecContext(ctx,
 			"INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
 			newStatusID, asg.RideID, "ENROUTE",
@@ -199,7 +189,81 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// 内部でULID生成用の関数（既存app_handlers.goなどと同様のもの）
+// ulidMakeは他ファイルと同等のULID生成関数とする
 func ulidMake() string {
+	return ulid.Make().String()
+}
+
+// ハンガリアン法による最小割り当て計算 (簡易実装例)
+// costMatrixは正方行列
+// 戻り値: assignment[i]=jは行iが列jに割り当てられたことを示す。
+// 割り当てがない場合は-1。
+// 以下は最小限のハンガリアン法参考実装例であり、本番環境での最適化は別途考慮が必要。
+func hungarianMethod(costMatrix [][]int) []int {
+	n := len(costMatrix)
+	u := make([]int, n+1)
+	v := make([]int, n+1)
+	p := make([]int, n+1)
+	way := make([]int, n+1)
+
+	for i := 1; i <= n; i++ {
+		p[0] = i
+		j0 := 0
+		minv := make([]int, n+1)
+		used := make([]bool, n+1)
+		for j := 1; j <= n; j++ {
+			minv[j] = 1000000000
+		}
+		for {
+			used[j0] = true
+			i0 := p[j0]
+			j1 := 0
+			delta := 1000000000
+			for j := 1; j <= n; j++ {
+				if !used[j] {
+					cur := costMatrix[i0-1][j-1] - u[i0] - v[j]
+					if cur < minv[j] {
+						minv[j] = cur
+						way[j] = j0
+					}
+					if minv[j] < delta {
+						delta = minv[j]
+						j1 = j
+					}
+				}
+			}
+			for j := 0; j <= n; j++ {
+				if used[j] {
+					u[p[j]] += delta
+					v[j] -= delta
+				} else {
+					minv[j] -= delta
+				}
+			}
+			j0 = j1
+			if p[j0] == 0 {
+				break
+			}
+		}
+		for {
+			j1 := way[j0]
+			p[j0] = p[j1]
+			j0 = j1
+			if j0 == 0 {
+				break
+			}
+		}
+	}
+
+	res := make([]int, n)
+	for j := 1; j <= n; j++ {
+		res[p[j]-1] = j - 1
+	}
+	return res
+}
+
+// 以下は既存処理
+
+func ulidMakeString() string {
 	return ulid.Make().String()
 }
