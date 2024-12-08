@@ -127,6 +127,34 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 前回位置を取得し距離を計算
+	var prevLat, prevLon int
+	var hasPrev bool
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT latitude, longitude FROM chair_locations 
+		 WHERE chair_id = ? AND created_at < ?
+		 ORDER BY created_at DESC LIMIT 1`,
+		chair.ID, location.CreatedAt).Scan(&prevLat, &prevLon)
+	if err != nil && err != sql.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	} else if err == nil {
+		hasPrev = true
+	}
+
+	if hasPrev {
+		distanceIncrement := abs(location.Latitude - prevLat) + abs(location.Longitude - prevLon)
+		_, err = tx.ExecContext(
+			ctx,
+			`UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?`,
+			distanceIncrement, chair.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
 	ride := &Ride{}
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
