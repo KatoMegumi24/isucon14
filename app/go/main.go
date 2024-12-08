@@ -2,6 +2,7 @@ package main
 
 import (
 	"compress/gzip"
+	"context"
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -153,6 +154,12 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
 		return
 	}
+	
+    // 各椅子の総移動距離を初期化
+    if err := initializeChairTotalDistance(ctx); err != nil {
+        writeError(w, http.StatusInternalServerError, err)
+        return
+    }
 
 	if _, err := db.ExecContext(ctx, "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'", req.PaymentServer); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -279,5 +286,67 @@ func (h *TailHandler) tail(w io.Writer, duration time.Duration) error {
 	if _, err := io.Copy(w, r); err != nil {
 		return fmt.Errorf("failed to copy: %w", err)
 	}
+	return nil
+}
+
+func initializeChairTotalDistance(ctx context.Context) error {
+	// 全ての位置情報を一度に取得
+	var locations []ChairLocation
+	if err := db.SelectContext(
+		ctx,
+		&locations,
+		`SELECT * FROM chair_locations ORDER BY chair_id, created_at ASC`,
+	); err != nil {
+		return err
+	}
+
+	// chair_idごとに位置情報をグループ化
+	chairLocations := make(map[string][]ChairLocation)
+	for _, loc := range locations {
+		chairLocations[loc.ChairID] = append(chairLocations[loc.ChairID], loc)
+	}
+
+	// バルクアップデート用のクエリを構築
+	var values []string
+	var args []interface{}
+	
+	for chairID, locs := range chairLocations {
+		var totalDistance int
+		for i := 1; i < len(locs); i++ {
+			totalDistance += calculateDistance(
+				locs[i].Latitude,
+				locs[i].Longitude,
+				locs[i-1].Latitude,
+				locs[i-1].Longitude,
+			)
+		}
+
+		var updatedAt time.Time
+		if len(locs) > 0 {
+			updatedAt = locs[len(locs)-1].CreatedAt
+		}
+
+		values = append(values, "(?, ?, ?)")
+		args = append(args, chairID, totalDistance, updatedAt)
+	}
+
+	// バルクアップデートを実行
+	if len(values) > 0 {
+		query := fmt.Sprintf(
+			`UPDATE chairs SET 
+				total_distance = CASE id 
+					WHEN ? THEN ? 
+					END,
+				total_distance_updated_at = CASE id 
+					WHEN ? THEN ? 
+					END
+			WHERE id IN (?)`,
+			strings.Join(values, " "))
+		
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
