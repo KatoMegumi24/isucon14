@@ -114,7 +114,9 @@ CREATE TABLE ride_statuses
 )
   COMMENT = 'ライドステータスの変更履歴テーブル';
 
-CREATE INDEX ride_statuses_ride_id_chair_sent_at_created_at ON ride_statuses (ride_id, chair_sent_at, created_at);
+CREATE INDEX ride_statuses_ride_id_created_at ON `ride_statuses` (`ride_id`, `created_at`);
+CREATE INDEX ride_statuses_ride_id_chair_sent_at_created_at ON `ride_statuses` (`ride_id`, `chair_sent_at`, `created_at`);
+CREATE INDEX ride_statuses_ride_id_app_sent_at_created_at ON `ride_statuses` (`ride_id`, `app_sent_at`, `created_at`);
 
 DROP TABLE IF EXISTS owners;
 CREATE TABLE owners
