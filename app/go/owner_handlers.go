@@ -203,7 +203,7 @@ func ownerGetChairs(w http.ResponseWriter, r *http.Request) {
 
 	// 変更後は単純なSELECTのみ
 	chairs := []chairWithDetail{}
-	if err := db_sub.SelectContext(ctx, &chairs, `
+	if err := db.SelectContext(ctx, &chairs, `
 		SELECT
 			id, owner_id, name, access_token, model, is_active, created_at, updated_at,
 			total_distance, total_distance_updated_at
