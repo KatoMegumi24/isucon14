@@ -71,25 +71,25 @@ func setup() http.Handler {
 	dbConfig.ParseTime = true
 	dbConfig.InterpolateParams = true
 
-	dbConfig.Addr = "192.168.0.11:3306"
+	dbConfig.Addr = "192.168.0.12:3306"
 	_db1, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	dbConfig.Addr = "192.168.0.13:3306"
-	// _db2, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
+	_db2, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	if err != nil {
 		panic(err)
 	}
 	db = _db1
-	db_sub = _db1
+	db_sub = _db2
 
 	// プール内に保持できるアイドル接続数の制限を設定 (default: 2)
 	db.SetMaxIdleConns(1024)
-	db_sub.SetMaxIdleConns(1024)
+	db.SetMaxIdleConns(1024)
 	// 接続してから再利用できる最大期間
 	db.SetConnMaxLifetime(0)
-	db_sub.SetConnMaxLifetime(0)
+	db.SetConnMaxLifetime(0)
 	// アイドル接続してから再利用できる最大期間
 	db.SetConnMaxIdleTime(0)
-	db_sub.SetConnMaxIdleTime(0)
+	db.SetConnMaxIdleTime(0)
 
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2
