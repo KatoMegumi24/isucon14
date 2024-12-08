@@ -26,6 +26,11 @@ import (
 
 var db *sqlx.DB
 
+var (
+	// chairCache はアクセストークンをキーにした椅子のキャッシュ
+	chairCache = make(map[string]*Chair)
+)
+
 func main() {
 	mux := setup()
 	slog.Info("Listening on :8080")
@@ -79,6 +84,17 @@ func setup() http.Handler {
 	db.SetConnMaxLifetime(0)
 	// アイドル接続してから再利用できる最大期間
 	db.SetConnMaxIdleTime(0)
+
+	// キャッシュの初期化
+	{
+		chairs := []*Chair{}
+		if err := db.Select(&chairs, "SELECT * FROM chairs"); err != nil {
+			panic(err)
+		}
+		for _, chair := range chairs {
+			chairCache[chair.AccessToken] = chair
+		}
+	}
 
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2

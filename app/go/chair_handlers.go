@@ -45,15 +45,21 @@ func chairPostChairs(w http.ResponseWriter, r *http.Request) {
 	chairID := ulid.Make().String()
 	accessToken := secureRandomStr(32)
 
-	_, err := db.ExecContext(
+	chair := &Chair{}
+	err := db.QueryRowContext(
 		ctx,
-		"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?)",
+		"INSERT INTO chairs (id, owner_id, name, model, is_active, access_token) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
 		chairID, owner.ID, req.Name, req.Model, false, accessToken,
+	).Scan(
+		&chair.ID, &chair.OwnerID, &chair.Name, &chair.Model, &chair.IsActive, &chair.AccessToken, &chair.CreatedAt, &chair.UpdatedAt,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	// キャッシュ更新
+	chairCache[accessToken] = chair
 
 	http.SetCookie(w, &http.Cookie{
 		Path:  "/",
