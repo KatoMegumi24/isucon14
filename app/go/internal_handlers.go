@@ -57,34 +57,21 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		Speed    int           `db:"speed"`
 	}
 	err = tx.SelectContext(ctx, &chairsWithModel, `
-		SELECT 
-			c.id,
-			c.model,
-			c.is_active,
-			c.last_latitude as last_latitude,
-			c.last_longitude as last_longitude,
-			cm.speed
+		SELECT c.id, c.model, c.is_active, c.last_latitude, c.last_longitude, cm.speed
 		FROM chairs c
 		INNER JOIN chair_models cm ON c.model = cm.name
-		LEFT JOIN (
-			SELECT DISTINCT r.chair_id 
-			FROM rides r
-			INNER JOIN ride_statuses rs ON rs.ride_id = r.id
-			WHERE rs.status NOT IN ('COMPLETED', 'CANCELED')
-			AND rs.created_at = (
-				SELECT MAX(created_at)
-				FROM ride_statuses
-				WHERE ride_id = r.id
-			)
-		) active_rides ON active_rides.chair_id = c.id
-		WHERE c.is_active = true
-		AND active_rides.chair_id IS NULL
+		WHERE c.is_active = TRUE
+		AND c.id NOT IN (
+			SELECT DISTINCT r2.chair_id 
+			FROM rides r2
+			INNER JOIN (
+				SELECT ride_id, MAX(created_at) AS max_created FROM ride_statuses GROUP BY ride_id
+			) t ON t.ride_id = r2.id
+			INNER JOIN ride_statuses rs2 ON rs2.ride_id = r2.id AND rs2.created_at = t.max_created
+			WHERE rs2.status != 'COMPLETED' AND r2.chair_id IS NOT NULL
+		)
 	`)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || len(chairsWithModel) == 0 {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

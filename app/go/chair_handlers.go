@@ -228,7 +228,7 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, &chairGetNotificationResponse{
 				// 状態変更から3秒以内に通知されている必要があるため、2秒後にリトライする
 				// see: https://gist.github.com/wtks/8eadf471daf7cb59942de02273ce7884#通知エンドポイント
-				RetryAfterMs: 1000,
+				RetryAfterMs: 100,
 			})
 			return
 		}
@@ -290,7 +290,7 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		},
 		// 状態変更から3秒以内に通知されている必要があるため、2秒後にリトライする
 		// see: https://gist.github.com/wtks/8eadf471daf7cb59942de02273ce7884#通知エンドポイント
-		RetryAfterMs: 1000,
+		RetryAfterMs: 100,
 	})
 }
 
