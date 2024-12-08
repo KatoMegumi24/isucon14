@@ -171,14 +171,14 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		newStatusID := ulidMake()
-		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
-			newStatusID, asg.RideID, "ENROUTE",
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		// newStatusID := ulidMake()
+		// if _, err := tx.ExecContext(ctx,
+		// 	"INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
+		// 	newStatusID, asg.RideID, "ENROUTE",
+		// ); err != nil {
+		// 	writeError(w, http.StatusInternalServerError, err)
+		// 	return
+		// }
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -260,10 +260,4 @@ func hungarianMethod(costMatrix [][]int) []int {
 		res[p[j]-1] = j - 1
 	}
 	return res
-}
-
-// 以下は既存処理
-
-func ulidMakeString() string {
-	return ulid.Make().String()
 }
