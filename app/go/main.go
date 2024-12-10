@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/kaz/pprotein/integration"
 	"github.com/motoki317/sc"
 )
 
@@ -99,22 +100,13 @@ func setup() http.Handler {
 	http.DefaultTransport.(*http.Transport).ForceAttemptHTTP2 = true
 	http.DefaultClient.Timeout = 5 * time.Second // 問題の切り分け用
 
-	// {
-	// 	mux := chi.NewRouter()
-	// 	mux.Handle("/debug/log/httplog", NewTailHandler("/var/log/nginx/access.log"))
-	// 	mux.Handle("/debug/log/slowlog", NewTailHandler("/var/log/mysql/mysql-slow.log"))
-
-	// 	mux.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
-	// 	mux.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
-	// 	mux.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
-	// 	mux.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
-	// 	mux.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
-	// 	mux.Handle("/debug/fgprof", fgprof.Handler())
-	// 	go http.ListenAndServe(":3000", mux)
-	// }
+	{
+		pproteinHandler := integration.NewDebugHandler()
+		go http.ListenAndServe(":3000", pproteinHandler)
+	}
 
 	mux := chi.NewRouter()
-	// mux.Use(middleware.Logger)
+	mux.Use(middleware.Logger)
 	mux.Use(middleware.Recoverer)
 	mux.HandleFunc("POST /api/initialize", postInitialize)
 
